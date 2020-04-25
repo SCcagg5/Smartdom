@@ -3,8 +3,60 @@ networks:
     meet.jitsi:
     proxy:
       driver: bridge
+    db-net:
+      internal: true
 
 services:
+    elasticsearch:
+        image: docker.elastic.co/elasticsearch/elasticsearch:7.6.0
+        container_name: elasticsearch
+        environment:
+            - cluster.name=docker-cluster
+            - bootstrap.memory_lock=false
+            - cluster.routing.allocation.disk.threshold_enabled=false
+            - discovery.type=single-node
+            - ES_JAVA_OPTS=-Xms512m -Xmx512m
+        ulimits:
+            memlock:
+              soft: -1
+              hard: -1
+        volumes:
+            - ./pdf/db/elastic/data:/usr/share/elasticsearch/data
+            - ./pdf/db/elastic/conf.yml:/usr/share/elasticsearch/config/elasticsearch.yml:ro
+        networks:
+            - db-net
+
+    micro-extract:
+        build: ./pdf/api
+        container_name: ocr
+        tty: true
+        stdin_open: true
+        expose:
+            - 8080
+        networks:
+            - db-net
+            - proxy
+        environment:
+            VIRTUAL_HOST: pdf.${DOMAIN}
+            VIRTUAL_PORT: 8080
+            LETSENCRYPT_HOST: pdf.${DOMAIN}
+            LETSENCRYPT_EMAIL: ${EMAIL}
+            API_PASS: password
+
+    kibana:
+        image: docker.elastic.co/kibana/kibana:7.6.0
+        container_name: kibana
+        volumes:
+            - ./admin/kibana/kibana.yml:/usr/share/kibana/config/kibana.yml
+        networks:
+            - db-net
+            - proxy
+        environment:
+            VIRTUAL_HOST: kibana.${DOMAIN}
+            VIRTUAL_PORT: 5601
+            LETSENCRYPT_HOST: kibana.${DOMAIN}
+            LETSENCRYPT_EMAIL: ${EMAIL}
+
     web:
         image: jitsi/web
         restart: ${RESTART_POLICY}
@@ -12,9 +64,9 @@ services:
             - 80
             - 443
         volumes:
-            - ${CONFIG}/web:/config
-            - ${CONFIG}/web/letsencrypt:/etc/letsencrypt
-            - ${CONFIG}/transcripts:/usr/share/jitsi-meet/transcripts
+            - ./jitsi/web:/config
+            - ./jitsi/web/letsencrypt:/etc/letsencrypt
+            - ./jitsi/transcripts:/usr/share/jitsi-meet/transcripts
         environment:
             - ENABLE_AUTH
             - ENABLE_GUESTS
@@ -55,7 +107,7 @@ services:
             - '5347'
             - '5280'
         volumes:
-            - ${CONFIG}/prosody:/config
+            - ./jitsi/prosody:/config
         environment:
             - AUTH_TYPE
             - ENABLE_AUTH
@@ -114,7 +166,7 @@ services:
         image: jitsi/jicofo
         restart: ${RESTART_POLICY}
         volumes:
-            - ${CONFIG}/jicofo:/config
+            - ./jitsi/jicofo:/config
         environment:
             - ENABLE_AUTH
             - XMPP_DOMAIN
@@ -144,7 +196,7 @@ services:
             - '${JVB_PORT}:${JVB_PORT}/udp'
             - '${JVB_TCP_PORT}:${JVB_TCP_PORT}'
         volumes:
-            - ${CONFIG}/jvb:/config
+            - ./jitsi/jvb:/config
         environment:
             - DOCKER_HOST_ADDRESS
             - XMPP_AUTH_DOMAIN
@@ -165,61 +217,61 @@ services:
             meet.jitsi:
 
     posteio:
-    image: analogic/poste.io
-    ports:
-      - 0.0.0.0:25:25
-      - 110:110
-      - 143:143
-      - 465:465
-      - 587:587
-      - 993:993
-      - 995:995
-      - 4190:4190
-    expose:
-      - 80
-    volumes:
-      - ./posteio:/data
-    hostname: mail
-    domainname: smartdom.ch
-    environment:
-      - TZ=Europe/Prague
-      - HTTPS=OFF
-      - VIRTUAL_HOST=mail.smartdom.ch
-      - VIRTUAL_PORT=80
-      - LETSENCRYPT_HOST=mail.smartdom.ch
-      - LETSENCRYPT_EMAIL=eliot.courtel@wanadoo.fr
-    networks:
-      - proxy
+        image: analogic/poste.io
+        ports:
+            - 0.0.0.0:25:25
+            - 110:110
+            - 143:143
+            - 465:465
+            - 587:587
+            - 993:993
+            - 995:995
+            - 4190:4190
+        expose:
+            - 80
+        volumes:
+            - ./posteio:/data
+        hostname: mail
+        domainname: smartdom.ch
+        environment:
+            - TZ=Europe/Prague
+            - HTTPS=OFF
+            - VIRTUAL_HOST=mail.smartdom.ch
+            - VIRTUAL_PORT=80
+            - LETSENCRYPT_HOST=mail.smartdom.ch
+            - LETSENCRYPT_EMAIL=eliot.courtel@wanadoo.fr
+        networks:
+            - proxy
 
     nginx:
-      image: jwilder/nginx-proxy:alpine
-      container_name: nginx
-      restart: always
-      labels:
-        com.github.jrcs.letsencrypt_nginx_proxy_companion.nginx_proxy: 'true'
-      ports:
-        - 80:80
-        - 443:443
-      volumes:
-        - ./proxy/logs/global:/var/log/nginx
-        - ./proxy/conf/proxy.conf:/etc/nginx/conf.d/proxy.conf:ro
-        - ./proxy/vhost:/etc/nginx/vhost.d
-        - ./proxy/passwd:/etc/nginx/htpasswd
-        - /srv/nginx/data/html:/usr/share/nginx/html
-        - /srv/nginx/data/certs:/etc/nginx/certs:ro
-        - /var/run/docker.sock:/tmp/docker.sock:ro
-      networks:
-        - proxy
+        image: jwilder/nginx-proxy:alpine
+        container_name: nginx
+        restart: always
+        labels:
+            com.github.jrcs.letsencrypt_nginx_proxy_companion.nginx_proxy: 'true'
+        ports:
+            - 80:80
+            - 443:443
+        volumes:
+            - ./proxy/logs/global:/var/log/nginx
+            - ./proxy/conf/proxy.conf:/etc/nginx/conf.d/proxy.conf:ro
+            - ./proxy/vhost:/etc/nginx/vhost.d
+            - ./proxy/passwd:/etc/nginx/htpasswd
+            - /srv/nginx/data/html:/usr/share/nginx/html
+            - /srv/nginx/data/certs:/etc/nginx/certs:ro
+            - /var/run/docker.sock:/tmp/docker.sock:ro
+        networks:
+            - proxy
 
     letsencrypt:
-      image: jrcs/letsencrypt-nginx-proxy-companion
-      container_name: letsencrypt
-      volumes:
-        - ./proxy/vhost:/etc/nginx/vhost.d
-        - /srv/nginx/data/certs:/etc/nginx/certs:rw
-        - /srv/nginx/data/html:/usr/share/nginx/html
-        - /var/run/docker.sock:/var/run/docker.sock:ro
-      depends_on:
-        - nginx
-      networks:
-        - proxy
+        image: jrcs/letsencrypt-nginx-proxy-companion
+        container_name: letsencrypt
+        volumes:
+            - ./proxy/vhost:/etc/nginx/vhost.d
+            - /srv/nginx/data/certs:/etc/nginx/certs:rw
+            - /srv/nginx/data/html:/usr/share/nginx/html
+            - /var/run/docker.sock:/var/run/docker.sock:ro
+        depends_on:
+            - nginx
+        networks:
+            - proxy
